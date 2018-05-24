@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from random import shuffle
 from past.builtins import xrange
 
@@ -30,7 +31,50 @@ def softmax_loss_naive(W, X, y, reg):
   # here, it is easy to run into numeric instability. Don't forget the        #
   # regularization!                                                           #
   #############################################################################
-  pass
+  num_train = X.shape[0]
+  num_classes = W.shape[1]
+
+  # Calculate loss for each example
+  f = np.zeros((num_train, num_classes))
+  f_max = np.zeros((num_train, 1))
+  for i in xrange(num_train):
+    for j in xrange(num_classes):
+      f[i, j] = np.dot(X[i, :], W[:, j])
+      if f[i, j] > f_max[i]:
+        f_max[i] = f[i, j]
+
+  exp_f = np.zeros_like(f)
+  sum_exp_f = np.zeros((num_train, 1))
+  for i in xrange(num_train):
+    for j in xrange(num_classes):
+      f[i, j] -= f_max[i]
+      exp_f[i, j] = math.exp(f[i, j])
+      sum_exp_f[i] += exp_f[i, j]
+
+  for i in xrange(num_train):
+    loss += -math.log(exp_f[i, y[i]] / sum_exp_f[i])
+
+  loss /= num_train
+
+  # Calculate regularization term
+  reg_term = 0.0
+  for i in xrange(W.shape[0]):
+    for j in xrange(W.shape[1]):
+      reg_term += W[i, j]**2
+
+  loss += reg * reg_term
+
+  # Calculate gradient
+  P = np.zeros((num_train, num_classes))
+  for i in xrange(num_train):
+    for j in xrange(num_classes):
+      P[i, j] = exp_f[i, j] / sum_exp_f[i]
+    P[i, y[i]] -= 1
+
+  for i in xrange(dW.shape[0]):
+    for j in xrange(dW.shape[1]):
+        dW[i, j] = 1 / num_train * np.dot(X[:, i].T, P[:, j])
+  
   #############################################################################
   #                          END OF YOUR CODE                                 #
   #############################################################################
@@ -54,7 +98,21 @@ def softmax_loss_vectorized(W, X, y, reg):
   # here, it is easy to run into numeric instability. Don't forget the        #
   # regularization!                                                           #
   #############################################################################
-  pass
+  N = X.shape[0]
+  f = np.dot(X, W)
+  f -= np.amax(f, axis = 1, keepdims = True) # for numerical stability
+  exp_f = np.exp(f)
+  exp_fyi = exp_f[range(N), y].reshape((N, 1)) # correct class probabilities
+  sum_exp_f = np.sum(exp_f, axis = 1, keepdims = True)
+  losses = -np.log(exp_fyi / sum_exp_f)
+  loss = 1 / N * np.sum(losses) + reg * np.sum(W * W)
+
+  P = exp_f / sum_exp_f
+  y_one_hot = np.zeros_like(P)
+  y_one_hot[range(len(y)), y] = 1
+  
+  df = 1 / N * (P - y_one_hot)
+  dW = np.dot(X.T, df)
   #############################################################################
   #                          END OF YOUR CODE                                 #
   #############################################################################
