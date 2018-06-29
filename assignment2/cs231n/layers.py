@@ -60,7 +60,6 @@ def affine_backward(dout, cache):
     x_flatten = x.reshape(x.shape[0], -1)
     dw = np.dot(x_flatten.T, dout)
 
-    N = x.shape[0]
     db = np.sum(dout, axis = 0)
     ###########################################################################
     #                             END OF YOUR CODE                            #
@@ -282,13 +281,14 @@ def batchnorm_backward(dout, cache):
     dinvvar = np.sum(xmu * dxnorm, axis = 0) # (D,)
 
     # Step 6: invvar = 1 / sqrtvar
-    dsqrtvar = -1 / sqrtvar**2 * dinvvar # (D,)
+    dsqrtvar = -1. / sqrtvar**2 * dinvvar # (D,)
 
     # Step 5: sqrtvar = np.sqrt(var + eps)
-    dvar = 1 / 2 / np.sqrt(var + eps) * dsqrtvar # (D,)
+    dvar = 1. / 2 / np.sqrt(var + eps) * dsqrtvar # (D,)
 
     # Step 4: var = 1 / N * np.sum(sq, axis = 0)
-    dsq = 1 / N * dvar # (D,)
+    #dsq = 1. / N * dvar # (D,)
+    dsq = 1. / N * np.ones((N, D)) * dvar # (N, D)
 
     # Step 3: sq = xmu**2
     dxmu += 2 * xmu * dsq # (N, D)
@@ -298,7 +298,7 @@ def batchnorm_backward(dout, cache):
     dmu = -1 * np.sum(dxmu, axis = 0) # (D,)
 
     # Step 1: mu = 1 / N * np.sum(x, axis = 0)
-    dx += 1 / N * dmu # (D,) broadcast to (N, D)
+    dx += 1. / N * np.ones((N, D)) * dmu # (D,) broadcast to (N, D)
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -334,8 +334,12 @@ def batchnorm_backward_alt(dout, cache):
 
     dgamma = np.sum(dout * xnorm, axis = 0)
     dbeta = np.sum(dout, axis = 0)
-    dx = gamma / sqrtvar * (dout - 1 / N * np.sum(dout, axis = 0) - xmu / N /
+    dx = gamma / sqrtvar * (dout - 1. / N * np.sum(dout, axis = 0) - xmu / N /
             sqrtvar**2 * np.sum(dout * xmu, axis = 0))
+
+    #dxnorm = dout * gamma
+    #dx = 1. / N * invvar * (N * dxnorm - np.sum(dxnorm, axis = 0) - xnorm *
+    #        np.sum(dxnorm * xnorm, axis = 0))
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -357,7 +361,7 @@ def layernorm_forward(x, gamma, beta, ln_param):
     Input:
     - x: Data of shape (N, D)
     - gamma: Scale parameter of shape (D,)
-    - beta: Shift paremeter of shape (D,)
+    - beta: Shift parameter of shape (D,)
     - ln_param: Dictionary with the following keys:
         - eps: Constant for numeric stability
 
@@ -369,7 +373,7 @@ def layernorm_forward(x, gamma, beta, ln_param):
     eps = ln_param.get('eps', 1e-5)
     ###########################################################################
     # TODO: Implement the training-time forward pass for layer norm.          #
-    # Normalize the incoming data, and scale and  shift the normalized data   #
+    # Normalize the incoming data, and scale and shift the normalized data    #
     #  using gamma and beta.                                                  #
     # HINT: this can be done by slightly modifying your training-time         #
     # implementation of  batch normalization, and inserting a line or two of  #
@@ -377,7 +381,44 @@ def layernorm_forward(x, gamma, beta, ln_param):
     # transformations you could perform, that would enable you to copy over   #
     # the batch norm code and leave it almost unchanged?                      #
     ###########################################################################
-    pass
+    # Dimensions of each training example
+    N, D = x.shape
+
+    # Step 1: calculate mean of each training example
+    mu = 1. / D * np.sum(x, axis = 1, keepdims = True)
+
+    # Step 2: subtract mean from features of each training example
+    xmu = x - mu
+
+    # Step 3: square differences for variance within each training example
+    sq = xmu**2
+
+    # Step 4: calculate variance
+    var = 1. / D * np.sum(sq, axis = 1, keepdims = True)
+    assert(var.shape == (N, 1))
+
+    # Step 5: calculate denominator for normalization
+    sqrtvar = np.sqrt(var + eps)
+    assert(sqrtvar.shape == (N, 1))
+
+    # Step 6: invert sqrtvar
+    invvar = 1. / sqrtvar
+
+    # Step 7: multiply for normalization
+    xnorm = xmu * invvar
+
+    # Step 8: multiply by gamma
+    gammax = gamma * xnorm
+
+    # Step 9: add beta
+    out = gammax + beta
+    assert(gammax.shape == (N, D))
+    assert(beta.shape == (D,))
+    assert(out.shape == (N, D))
+
+    # Store intermediate values in cache for backward pass
+    cache = (mu, xmu, sq, var, eps, sqrtvar, invvar, xnorm, gamma, gammax,
+            beta)
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -408,7 +449,39 @@ def layernorm_backward(dout, cache):
     # implementation of batch normalization. The hints to the forward pass    #
     # still apply!                                                            #
     ###########################################################################
-    pass
+    mu, xmu, sq, var, eps, sqrtvar, invvar, xnorm, gamma, gammax, beta = cache
+    N, D = dout.shape
+
+    # Step 9: out = gammax + beta
+    dgammax = dout # (N, D)
+    dbeta = np.sum(dout, axis = 0) # (D,), gradient still calculated vertically
+
+    # Step 8: gammax = gamma * xnorm
+    dxnorm = gamma * dgammax # (N, D)
+    dgamma = np.sum(xnorm * dgammax, axis = 0) # (D,), still vertically
+
+    # Step 7: xnorm = xmu * invvar
+    dxmu = invvar * dxnorm # (N, D)
+    dinvvar = np.sum(xmu * dxnorm, axis = 1, keepdims = True) # (N, 1)
+
+    # Step 6: invvar = 1 / sqrtvar
+    dsqrtvar = -1 / sqrtvar**2 * dinvvar # (N, 1)
+
+    # Step 5: sqrtvar = np.sqrt(var + eps)
+    dvar = 1. / 2 / np.sqrt(var + eps) * dsqrtvar # (N, 1)
+
+    # Step 4: var = 1 / D * np.sum(sq, axis = 1, keepdims = True)
+    dsq = 1. / D * dvar # (N, 1)
+
+    # Step 3: sq = xmu**2
+    dxmu += 2 * xmu * dsq # (N, D)
+
+    # Step 2: xmu = x - mu
+    dx = dxmu # (N, D)
+    dmu = -1 * np.sum(dxmu, axis = 1, keepdims = True) # (N, 1)
+
+    # Step 1: mu = 1 / D * np.sum(x, axis = 1, keepdims = True)
+    dx += 1. / D * dmu # (N, 1) broadcast to (N, D)
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
