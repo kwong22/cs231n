@@ -317,35 +317,39 @@ class FullyConnectedNet(object):
         # self.bn_params[1] to the forward pass for the second batch normalization #
         # layer, etc.                                                              #
         ############################################################################
-        caches = []
-        A = X
+        caches = {} # dictionary so that indices can match with parameters
+        drop_caches = {} # dictionary to store caches for dropout layers
+        out = X
 
-        if self.normalization == 'batchnorm' or self.normalization == 'layernorm':
-            # Perform affine-norm-relu for each layer
-            for l in range(1, self.num_layers):
-                A_prev = A
-                A, cache = affine_norm_relu_forward(A_prev,
+        for l in range(1, self.num_layers):
+            if self.normalization in ['batchnorm', 'layernorm']:
+                # Perform affine-norm-relu for each layer
+                out, cache = affine_norm_relu_forward(out,
                         self.params["W" + str(l)],
                         self.params["b" + str(l)],
                         self.normalization,
                         self.params["gamma" + str(l)],
                         self.params["beta" + str(l)],
                         self.bn_params[l-1])
-                caches.append(cache)
-        else:
-            # Perform affine-relu for each layer
-            for l in range(1, self.num_layers):
-                A_prev = A
-                A, cache = affine_relu_forward(A_prev,
+            else:
+                # Perform affine-relu for each layer
+                out, cache = affine_relu_forward(out,
                         self.params["W" + str(l)],
                         self.params["b" + str(l)])
-                caches.append(cache)
+
+            # Perform dropout after relu
+            if self.use_dropout:
+                out, drop_cache = dropout_forward(out, self.dropout_param)
+                drop_caches[l] = drop_cache
+
+            #caches.append(cache)
+            caches[l] = cache
 
         # Last layer is affine layer only
-        scores, cache = affine_forward(A,
+        scores, cache = affine_forward(out,
                 self.params["W" + str(self.num_layers)],
                 self.params["b" + str(self.num_layers)])
-        caches.append(cache)
+        caches[self.num_layers] = cache
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -375,33 +379,32 @@ class FullyConnectedNet(object):
             loss += self.reg / 2 * np.sum(self.params["W" + str(l+1)]**2)
 
         # Backward pass for affine layer (the last layer)
-        dAL, dWL, dbL = affine_backward(dZL, caches[self.num_layers - 1])
+        dAL, dWL, dbL = affine_backward(dZL, caches[self.num_layers])
         dWL += self.reg * self.params["W" + str(self.num_layers)]
         grads["W" + str(self.num_layers)] = dWL
         grads["b" + str(self.num_layers)] = dbL
 
-        dA_prev = dAL
+        dout = dAL
 
-        if self.normalization == 'batchnorm' or self.normalization == 'layernorm':
-            # Backward passes for L-1 affine-norm-relu layers
-            for l in reversed(range(1, self.num_layers)):
-                dA = dA_prev
-                dA_prev, dW_temp, db_temp, dgamma_temp, dbeta_temp = affine_norm_relu_backward(dA, self.normalization, caches[l-1])
-                dW_temp += self.reg * self.params["W" + str(l)]
+        for l in reversed(range(1, self.num_layers)):
+            # Backward pass for dropout (first in backward pass)
+            if self.use_dropout:
+                dout = dropout_backward(dout, drop_caches[l])
 
-                grads["W" + str(l)] = dW_temp
-                grads["b" + str(l)] = db_temp
+            if self.normalization == 'batchnorm' or self.normalization == 'layernorm':
+                # Backward passes for L-1 affine-norm-relu layers
+                dout, dW_temp, db_temp, dgamma_temp, dbeta_temp = affine_norm_relu_backward(dout, self.normalization, caches[l])
+
                 grads["gamma" + str(l)] = dgamma_temp
                 grads["beta" + str(l)] = dbeta_temp
-        else:
-            # Backward passes for L-1 affine-relu layers
-            for l in reversed(range(1, self.num_layers)):
-                dA = dA_prev
-                dA_prev, dW_temp, db_temp = affine_relu_backward(dA, caches[l-1])
-                dW_temp += self.reg * self.params["W" + str(l)]
+            else:
+                # Backward passes for L-1 affine-relu layers
+                dout, dW_temp, db_temp = affine_relu_backward(dout, caches[l])
 
-                grads["W" + str(l)] = dW_temp
-                grads["b" + str(l)] = db_temp
+            dW_temp += self.reg * self.params["W" + str(l)]
+
+            grads["W" + str(l)] = dW_temp
+            grads["b" + str(l)] = db_temp
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
