@@ -151,6 +151,8 @@ class CaptioningRNN(object):
         re_out, re_cache = None, None
         if self.cell_type == 'rnn':
             re_out, re_cache = rnn_forward(embed_out, fc_out, Wx, Wh, b)
+        elif self.cell_type == 'lstm':
+            re_out, re_cache = lstm_forward(embed_out, fc_out, Wx, Wh, b)
 
         tfc_out, tfc_cache = temporal_affine_forward(re_out, W_vocab, b_vocab)
 
@@ -162,6 +164,8 @@ class CaptioningRNN(object):
         dembed_out, dfc_out = None, None
         if self.cell_type == 'rnn':
             dembed_out, dfc_out, grads['Wx'], grads['Wh'], grads['b'] = rnn_backward(dre_out, re_cache)
+        elif self.cell_type == 'lstm':
+            dembed_out, dfc_out, grads['Wx'], grads['Wh'], grads['b'] = lstm_backward(dre_out, re_cache)
 
         grads['W_embed'] = word_embedding_backward(dembed_out, embed_cache)
 
@@ -235,13 +239,22 @@ class CaptioningRNN(object):
         # Initialize hidden state with image features
         fc_out = affine_forward(features, W_proj, b_proj)[0] # (N, H)
         prev_h = fc_out # (N, H)
+        prev_c = np.zeros(fc_out.shape)
 
         # Begin with <START> token, N examples, 1 word each
         prev_word = np.full((N, 1), self._start) # (N, 1)
 
         for t in range(max_length):
             embed_out = word_embedding_forward(prev_word, W_embed)[0] # (N, 1, D)
-            next_h = rnn_step_forward(embed_out[:,0,:], prev_h, Wx, Wh, b)[0] # (N, H)
+
+            next_h = None
+            if self.cell_type == 'rnn':
+                next_h = rnn_step_forward(embed_out[:,0,:], prev_h, Wx, Wh, b)[0] # (N, H)
+            elif self.cell_type == 'lstm':
+                next_h, next_c, _ = lstm_step_forward(embed_out[:,0,:], prev_h,
+                        prev_c, Wx, Wh, b)
+                prev_c = next_c
+
             scores = affine_forward(next_h, W_vocab, b_vocab)[0] # (N, V)
 
             next_word = np.argmax(scores, axis=1) # (N,)
